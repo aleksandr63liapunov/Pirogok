@@ -1,6 +1,8 @@
 package com.example.english.service;
 
 import com.example.english.config.BotConfig;
+import com.example.english.model.Cocktails;
+import com.example.english.model.Ingredients;
 import com.example.english.model.UserBotPiro;
 import com.example.english.model.WordTranslation;
 import com.example.english.repo.UserRepository;
@@ -28,6 +30,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+
 @Component
 
 public class TelegrammBot extends TelegramLongPollingBot {
@@ -36,19 +39,25 @@ public class TelegrammBot extends TelegramLongPollingBot {
     private final UserRepository userRepository;
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
     private final Map<Long, Boolean> userTestStatusMap = new ConcurrentHashMap<>();
+    private final CocktailsService cocktailsService;
+    private final IngredientsService ingredientsService;
 
     // Хранение текущего языка пользователя
     private final Map<Long, String> userLanguageMap = new ConcurrentHashMap<>();
 
-    public TelegrammBot(BotConfig botConfig, TranslationService translationService, UserRepository userRepository) {
+    public TelegrammBot(BotConfig botConfig, IngredientsService ingredientsService, TranslationService translationService, CocktailsService cocktailsService, UserRepository userRepository) {
         this.userRepository = userRepository;
+        this.ingredientsService = ingredientsService;
         this.botConfig = botConfig;
         this.translationService = translationService;
-
+        this.cocktailsService = cocktailsService;
         List<BotCommand> listOfCommand = new ArrayList<>();
         listOfCommand.add(new BotCommand("/start", "Welcome message"));
         listOfCommand.add(new BotCommand("/test", "Get a random word and translation"));
         listOfCommand.add(new BotCommand("/change_language", "Switch language"));
+        listOfCommand.add(new BotCommand("/cocktails", "Get list of cocktails")); // Новая команда
+        listOfCommand.add(new BotCommand("/ingredient", "Get ingredient"));
+
         try {
             execute(new SetMyCommands(listOfCommand, new BotCommandScopeDefault(), null));
         } catch (TelegramApiException e) {
@@ -69,10 +78,53 @@ public class TelegrammBot extends TelegramLongPollingBot {
                 case "/pause_resume" -> toggleTestStatus(chatId);
                 case "English" -> setLanguage(chatId, "en");
                 case "Russian" -> setLanguage(chatId, "ru");
-                default -> handleTranslation(chatId, messageText);
+                case "/cocktails" -> handleCocktails(chatId); // Добавляем обработку новой команды
+                case "Calculate Ingredients" -> requestPersonCount(chatId); // Новый метод для запроса количества людей
+                default -> {
+                    if (isNumeric(messageText)) { // Если пользователь ввел число
+                        handleIngredientsCalculation(chatId, Integer.parseInt(messageText));
+                    } else {
+                        // Проверка на коктейли и перевод
+                        boolean isCocktailFound = handleIngredientsIfCocktail(chatId, messageText);
+                        if (!isCocktailFound) {
+                            handleTranslation(chatId, messageText);
+                        }
+                    }
+                }
             }
         }
     }
+
+    private void requestPersonCount(long chatId) {
+        sendMessage(chatId, "Введите количество человек для расчета ингредиентов:");
+    }
+
+    private boolean isNumeric(String str) {
+        try {
+            Integer.parseInt(str);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private void handleIngredientsCalculation(long chatId, int personCount) {
+        try {
+            // Используем первый коктейль как пример
+            Cocktails cocktail = cocktailsService.getAll().get(0); // Замените на выбор коктейля пользователем
+            Map<String, Double> ingredients = ingredientsService.getIngredientsForPerson(cocktail, personCount);
+
+            StringBuilder response = new StringBuilder("Ингредиенты для ").append(personCount).append(" человек:\n");
+            ingredients.forEach((ingredient, amount) ->
+                    response.append("• ").append(ingredient).append(": ").append(amount).append(" л\n")
+            );
+
+            sendMessage(chatId, response.toString());
+        } catch (Exception e) {
+            sendMessage(chatId, "Ошибка при расчете ингредиентов: " + e.getMessage());
+        }
+    }
+
     private void toggleTestStatus(long chatId) {
         boolean currentStatus = userTestStatusMap.getOrDefault(chatId, false); // Получаем текущее состояние
         userTestStatusMap.put(chatId, !currentStatus); // Меняем его
@@ -82,6 +134,75 @@ public class TelegrammBot extends TelegramLongPollingBot {
                 : "Test resumed.";
         sendMessage(chatId, statusMessage);
     }
+
+    private void handleCocktails(long chatId) {
+        List<Cocktails> cocktails = cocktailsService.getAll();
+        if (cocktails.isEmpty()) {
+            sendMessage(chatId, "No cocktails found.");
+        } else {
+            StringBuilder response = new StringBuilder("🍹 Меню коктейлей :\n");
+            for (Cocktails cocktail : cocktails) {
+                response.append("• ").append(cocktail.getName()).append("\n");
+            }
+            response.append("\nВведите название коктейля, чтобы узнать его ингредиенты.");
+            sendMessage(chatId, response.toString());
+        }
+    }
+
+    private boolean handleIngredientsIfCocktail(long chatId, String cocktailName) {
+        // Найти коктейль по имени
+        List<Cocktails> cocktails = cocktailsService.getAll();
+        Cocktails selectedCocktail = cocktails.stream()
+                .filter(c -> c.getName().equalsIgnoreCase(cocktailName))
+                .findFirst()
+                .orElse(null);
+
+        if (selectedCocktail == null) {
+            return false; // Коктейль не найден
+        }
+
+        // Найти ингредиенты для коктейля
+        Ingredients ingredients = ingredientsService.findIngredientsByCocktails(selectedCocktail);
+        if (ingredients == null) {
+            sendMessage(chatId, "Для коктейля '" + cocktailName + "' ингредиенты не найдены.");
+        } else {
+            StringBuilder response = new StringBuilder("🍹 Ингредиенты для коктейля '")
+                    .append(cocktailName)
+                    .append("':\n");
+
+            if (ingredients.getRome() > 0)
+                response.append("• Ром: ").append(ingredients.getRome()).append("\n");
+            if (ingredients.getAperol() > 0)
+                response.append("• Апероль: ").append(ingredients.getAperol()).append("\n");
+            if (ingredients.getSparkling_wine() > 0)
+                response.append("• Игристое вино: ").append(ingredients.getSparkling_wine()).append("\n");
+            if (ingredients.getJin() > 0)
+                response.append("• Джин: ").append(ingredients.getJin()).append("\n");
+            if (ingredients.getWiskey() > 0)
+                response.append("• Виски: ").append(ingredients.getWiskey()).append("\n");
+            if (ingredients.getTequila() > 0)
+                response.append("• Текила: ").append(ingredients.getTequila()).append("\n");
+            if (ingredients.getTreeple_sec() > 0)
+                response.append("• Апельсин лик: ").append(ingredients.getTreeple_sec()).append("\n");
+            if (ingredients.getSparkling_water() > 0)
+                response.append("• Вода газ: ").append(ingredients.getSparkling_water()).append("\n");
+            if (ingredients.getLimon() > 0)
+                response.append("• Лимон: ").append(ingredients.getLimon()).append("\n");
+            if (ingredients.getPineapple_Juice() > 0)
+                response.append("• Анан сок: ").append(ingredients.getPineapple_Juice()).append("\n");
+            if (ingredients.getCranberry_Juice() > 0)
+                response.append("• Kлюкв сок: ").append(ingredients.getCranberry_Juice()).append("\n");
+            if (ingredients.getOrange_Juice() > 0)
+                response.append("• Апельсин сок: ").append(ingredients.getOrange_Juice()).append("\n");
+            if (ingredients.getTonic() > 0)
+                response.append("• Тоник: ").append(ingredients.getTonic()).append("\n");
+            // Добавьте остальные ингредиенты по аналогии
+
+            sendMessage(chatId, response.toString());
+        }
+        return true; // Коктейль найден и обработан
+    }
+
 
     private void startCommandReceived(long chatId, String name) {
         String answer = "Hi, " + name + "! Send '/test' to get a random word or '/change_language' to switch language.";
@@ -174,12 +295,12 @@ public class TelegrammBot extends TelegramLongPollingBot {
         row1.add("/test");
         row1.add("/pause_resume");
         row1.add("/change_language");
-
-//        KeyboardRow row2 = new KeyboardRow();
-//        row2.add("Get Example Sentence");
+        row1.add("/cocktails"); // Добавляем кнопку Cocktails
+        KeyboardRow row2 = new KeyboardRow();
+        row2.add("Calculate Ingredients");
 
         keyboardRows.add(row1);
-//        keyboardRows.add(row2);
+        keyboardRows.add(row2);
 
         keyboardMarkup.setKeyboard(keyboardRows);
         message.setReplyMarkup(keyboardMarkup);
@@ -190,6 +311,7 @@ public class TelegrammBot extends TelegramLongPollingBot {
             e.printStackTrace();
         }
     }
+
     @Override
     public String getBotUsername() {
         return botConfig.getBotName();
