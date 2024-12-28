@@ -8,4 +8,3 @@ services:
     environment:
       - JAVA_OPTS=""
     restart: always
-

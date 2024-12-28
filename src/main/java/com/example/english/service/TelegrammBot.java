@@ -241,7 +241,7 @@ public class TelegrammBot extends TelegramLongPollingBot {
 
 
     private void startCommandReceived(long chatId, String name) {
-        String answer = "Hi, " + name + "! Send '/test' to get a random word or '/change_language' to switch language.";
+        String answer = "Здаров, " + name + "! Send '/test' to get a random word or '/change_language' to switch language.";
         sendMessage(chatId, answer);
         userLanguageMap.put(chatId, "en"); // Устанавливаем язык по умолчанию
     }
