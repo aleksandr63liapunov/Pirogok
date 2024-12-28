@@ -78,6 +78,7 @@ public class TelegrammBot extends TelegramLongPollingBot {
                 case "/pause_resume" -> toggleTestStatus(chatId);
                 case "English" -> setLanguage(chatId, "en");
                 case "Russian" -> setLanguage(chatId, "ru");
+                case "⬅️ Назад" -> sendMessage(chatId, "Вы вернулись в главное меню. Используйте команды для взаимодействия.");
                 case "/cocktails" -> handleCocktails(chatId); // Добавляем обработку новой команды
                 case "Calculate Ingredients" -> requestPersonCount(chatId); // Новый метод для запроса количества людей
                 default -> {
@@ -135,17 +136,52 @@ public class TelegrammBot extends TelegramLongPollingBot {
         sendMessage(chatId, statusMessage);
     }
 
+    //    private void handleCocktails(long chatId) {
+//        List<Cocktails> cocktails = cocktailsService.getAll();
+//        if (cocktails.isEmpty()) {
+//            sendMessage(chatId, "No cocktails found.");
+//        } else {
+//            StringBuilder response = new StringBuilder("🍹 Меню коктейлей :\n");
+//            for (Cocktails cocktail : cocktails) {
+//                response.append("• ").append(cocktail.getName()).append("\n");
+//            }
+//            response.append("\nВведите название коктейля, чтобы узнать его ингредиенты.");
+//            sendMessage(chatId, response.toString());
+//        }
+//    }
     private void handleCocktails(long chatId) {
         List<Cocktails> cocktails = cocktailsService.getAll();
         if (cocktails.isEmpty()) {
             sendMessage(chatId, "No cocktails found.");
-        } else {
-            StringBuilder response = new StringBuilder("🍹 Меню коктейлей :\n");
-            for (Cocktails cocktail : cocktails) {
-                response.append("• ").append(cocktail.getName()).append("\n");
-            }
-            response.append("\nВведите название коктейля, чтобы узнать его ингредиенты.");
-            sendMessage(chatId, response.toString());
+            return;
+        }
+
+        SendMessage message = new SendMessage();
+        message.setChatId(chatId);
+        message.setText("🍹 Выберите коктейль:");
+
+        // Создаем клавиатуру с коктейлями
+        ReplyKeyboardMarkup keyboardMarkup = new ReplyKeyboardMarkup();
+        keyboardMarkup.setResizeKeyboard(true); // Удобная клавиатура
+
+        List<KeyboardRow> keyboardRows = new ArrayList<>();
+        for (Cocktails cocktail : cocktails) {
+            KeyboardRow row = new KeyboardRow();
+            row.add(cocktail.getName()); // Добавляем название коктейля в каждую строку
+            keyboardRows.add(row);
+        }
+        KeyboardRow backRow = new KeyboardRow();
+        backRow.add("⬅️ Назад");
+        keyboardRows.add(backRow);
+
+        // Устанавливаем клавиатуру
+        keyboardMarkup.setKeyboard(keyboardRows);
+        message.setReplyMarkup(keyboardMarkup);
+
+        try {
+            execute(message);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
         }
     }
 
@@ -245,6 +281,7 @@ public class TelegrammBot extends TelegramLongPollingBot {
             }
         }, 0, 5, TimeUnit.SECONDS);
     }
+
 
     private void handleTranslation(long chatId, String word) {
         String userLanguage = userLanguageMap.getOrDefault(chatId, "en"); // Язык пользователя
